@@ -1,0 +1,14 @@
+# Rust build artifacts
+/target
+
+# examples scratch
+**/_work/
+*.pgm
+
+# OS cruft
+.DS_Store
+
+# NEVER commit the holder's real eID signature (personal data).
+# It lives outside this repo; these patterns are defense-in-depth.
+eid-signature-*
+*eid*signature*

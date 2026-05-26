@@ -1,0 +1,26 @@
+[package]
+name = "sigtrace"
+version = "0.1.0"
+edition = "2021"
+description = "Signature-specialised bitmap->vector tracer for low-quality eID JPEGs. Zero dependencies; builds for macOS/iOS/Android/Linux/Windows."
+license = "MIT"
+
+# Zero dependencies on purpose: the whole pipeline is hand-rolled std Rust so it
+# cross-compiles to every target without a build chain. JPEG decoding is left to
+# the host (every platform has one); the core takes grayscale pixels.
+[dependencies]
+
+[lib]
+name = "sigtrace"
+path = "src/lib.rs"
+# cdylib/staticlib make it linkable from Swift (iOS) and Kotlin/JNI (Android).
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "sigtrace"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"

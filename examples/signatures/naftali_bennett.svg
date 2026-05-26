@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 83 97.33 71.14">
+<g transform="translate(-346.074 -1335.144)">
+<g transform="translate(119.664 413.771)">
+<g transform="translate(270.578 1049.477) rotate(-17)">
+<path d="M46.746,0C11.237,38.9,0,21.726,0,21.726" fill="none" stroke="#223480" stroke-width="2"/>
+</g>
+<path d="M529.832,807.721c10.962-.661,12.758,4.725,12.38,5.575s-5.556-.032-8.021.635-2.657,1.916-2.657,1.916l-.756,6.984" transform="translate(-257.036 232.967)" fill="none" stroke="#223480" stroke-width="2"/>
+<path d="M516.707,818.378s-6.229,21.8-32.181,22.63" transform="translate(-252.541 233.502)" fill="none" stroke="#223480" stroke-width="2"/>
+<path d="M499.141,811.633s-3.073,7.821-8.081,9.806-11.435,3.066-11.642-5.031,5.19-42.354,55.018-50.036" transform="translate(-252 239)" fill="none" stroke="#223480" stroke-width="2"/>
+<g transform="translate(291.52 1050.256)" fill="#fff" stroke="#223480" stroke-width="2">
+<path d="M0,0.5a1,0.5 0 1,0 2,0a1,0.5 0 1,0 -2,0" stroke="none"/>
+<path d="M0.5,0.5a0.5,0.5 0 1,0 1,0a0.5,0.5 0 1,0 -1,0" fill="none"/>
+</g>
+</g>
+</g>
+</svg>
