@@ -14,8 +14,16 @@ cd "$(dirname "$0")"
 BIN=../target/release/sigtrace
 [ -x "$BIN" ] || (cd .. && cargo build --release)
 
-CSS="$(mktemp).css"
-printf '* { fill:#000 !important; stroke:#000 !important; }\n' > "$CSS"
+# Render a signature SVG to black-ink-on-white PNG ($2) at width $3.
+# Uses the ALPHA channel (render natural on transparent, then extract+negate) so
+# it works for stroked paths (fill:none), filled paths, and any ink colour.
+# A forced-black fill stylesheet would fill stroke-only paths into black blobs.
+ink() {  # ink <svg> <out.png> <width>
+  local tmp; tmp="$(mktemp).png"
+  rsvg-convert -w "$3" -o "$tmp" "$1"
+  magick "$tmp" -alpha extract -negate "$2"
+  rm -f "$tmp"
+}
 
 # montage labels need a font; find one across platforms
 FONT=""
@@ -35,8 +43,8 @@ cells=()
 for k in $SAMPLE; do
   svg="signatures/$k.svg"
   [ -f "$svg" ] || { echo "skip $k (no svg)"; continue; }
-  rsvg-convert --stylesheet "$CSS" -w 900  -b white -o "$W/${k}_o.png"   "$svg"
-  rsvg-convert --stylesheet "$CSS" -w 1600 -b white -o "$W/${k}_big.png" "$svg"
+  ink "$svg" "$W/${k}_o.png"   900
+  ink "$svg" "$W/${k}_big.png" 1600
   magick "$W/${k}_big.png" -colorspace Gray -resize 250x -quality 90 "$W/${k}_deg.jpg"
   magick "$W/${k}_deg.jpg" -filter point -resize 900x "$W/${k}_dv.png"   # show true pixels
   magick "$W/${k}_deg.jpg" -colorspace Gray -depth 8 "$W/${k}.pgm"
@@ -49,5 +57,5 @@ done
 
 magick montage "${FONTARG[@]}" -pointsize 22 -fill black "${cells[@]}" \
   -tile 3x -geometry 460x200+6+10 -background white comparison.png
-rm -rf "$W" "$CSS"
+rm -rf "$W"
 echo "wrote examples/comparison.png"

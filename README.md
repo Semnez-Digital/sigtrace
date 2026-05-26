@@ -65,15 +65,18 @@ Across **131 modern signatures** (Wikimedia Commons) degraded to eID quality
 
 | metric | value |
 |---|---|
-| mean IoU | **0.94** |
-| every signature | **≥ 0.80** |
-| ≥ 0.90 | 89 % |
-| under heavy (Q40/Q30) compression | mean still ~0.93 |
+| mean IoU | **0.91** |
+| median | 0.92 |
+| ≥ 0.80 | 97 % |
+| ≥ 0.70 | 99 % |
+| under heavy Q40 compression | mean 0.905 |
 | trace time | ~20 ms per signature |
 
 That's on par with GPL Potrace's fidelity, while staying permissive and
-dependency-free. Faded/light-ink inputs (which would otherwise trace to nothing)
-recover to ~0.95 mean thanks to the auto-contrast guard.
+dependency-free. The lowest scorers are very thin / sparse signatures where the
+trace is still faithful but strict pixel-IoU punishes any sub-pixel width
+difference. Faded/light-ink inputs (which would otherwise trace to nothing) are
+recovered by the auto-contrast guard.
 
 ## Library usage
 
