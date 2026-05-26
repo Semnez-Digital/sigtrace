@@ -14,8 +14,8 @@ dark-ish ink on a light background and is tuned hard for that one job.
 ```
    blocky 250px JPEG            sigtrace
    ┌───────────────┐          ┌───────────────┐
-   │  ~╱╲╮ shaky    │   ──►    │   ╱╲  smooth   │   →  <path d="M…C…Z"/>
-   │  staircased    │          │   vector ink   │
+   │  ~╱╲╮ shaky   │   ──►    │   ╱╲  smooth  │   →  <path d="M…C…Z"/>
+   │  staircased   │          │   vector ink  │
    └───────────────┘          └───────────────┘
 ```
 
