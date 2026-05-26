@@ -2,6 +2,8 @@
 //! ("An Algorithm for Automatically Fitting Digitized Curves", Graphics Gems 1990.)
 //! Direct port of the validated Python reference.
 
+use std::ops::{Add, Sub};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pt {
     pub x: f64,
@@ -12,10 +14,10 @@ impl Pt {
     pub fn new(x: f64, y: f64) -> Pt {
         Pt { x, y }
     }
-    pub fn sub(self, o: Pt) -> Pt {
+    pub fn minus(self, o: Pt) -> Pt {
         Pt::new(self.x - o.x, self.y - o.y)
     }
-    pub fn add(self, o: Pt) -> Pt {
+    pub fn plus(self, o: Pt) -> Pt {
         Pt::new(self.x + o.x, self.y + o.y)
     }
     pub fn scale(self, s: f64) -> Pt {
@@ -37,6 +39,22 @@ impl Pt {
     }
 }
 
+impl Add for Pt {
+    type Output = Pt;
+
+    fn add(self, o: Pt) -> Pt {
+        Pt::new(self.x + o.x, self.y + o.y)
+    }
+}
+
+impl Sub for Pt {
+    type Output = Pt;
+
+    fn sub(self, o: Pt) -> Pt {
+        Pt::new(self.x - o.x, self.y - o.y)
+    }
+}
+
 /// A cubic Bezier as 4 control points.
 pub type Cubic = [Pt; 4];
 
@@ -53,7 +71,7 @@ pub fn resample_closed(pts: &[Pt], step: f64) -> Vec<Pt> {
     for i in 0..n {
         let a = pts[i];
         let b = pts[(i + 1) % n];
-        cum.push(cum[i] + b.sub(a).len());
+        cum.push(cum[i] + b.minus(a).len());
     }
     let total = cum[n];
     if total < 1e-6 {
@@ -76,7 +94,7 @@ pub fn resample_closed(pts: &[Pt], step: f64) -> Vec<Pt> {
         };
         let a = pts[seg_i];
         let b = pts[(seg_i + 1) % n];
-        out.push(a.add(b.sub(a).scale(t)));
+        out.push(a.plus(b.minus(a).scale(t)));
     }
     out
 }
@@ -126,8 +144,8 @@ pub fn turn_angles(pts: &[Pt], k: usize) -> Vec<f64> {
     for i in 0..n {
         let prev = pts[((i as isize - k as isize) % ni + ni) as usize % n];
         let next = pts[(i + k) % n];
-        let a = pts[i].sub(prev);
-        let b = next.sub(pts[i]);
+        let a = pts[i].minus(prev);
+        let b = next.minus(pts[i]);
         let denom = (a.len() * b.len()).max(1e-9);
         let cos = (a.dot(b) / denom).clamp(-1.0, 1.0);
         out[i] = cos.acos().to_degrees();
@@ -150,29 +168,31 @@ fn q(ctrl: &Cubic, t: f64) -> Pt {
 }
 
 fn q_deriv1(ctrl: &Cubic, t: f64) -> Pt {
-    let d0 = ctrl[1].sub(ctrl[0]).scale(3.0);
-    let d1 = ctrl[2].sub(ctrl[1]).scale(3.0);
-    let d2 = ctrl[3].sub(ctrl[2]).scale(3.0);
+    let d0 = ctrl[1].minus(ctrl[0]).scale(3.0);
+    let d1 = ctrl[2].minus(ctrl[1]).scale(3.0);
+    let d2 = ctrl[3].minus(ctrl[2]).scale(3.0);
     let mt = 1.0 - t;
-    d0.scale(mt * mt).add(d1.scale(2.0 * mt * t)).add(d2.scale(t * t))
+    d0.scale(mt * mt)
+        .plus(d1.scale(2.0 * mt * t))
+        .plus(d2.scale(t * t))
 }
 
 fn q_deriv2(ctrl: &Cubic, t: f64) -> Pt {
-    let d0 = ctrl[2].sub(ctrl[1].scale(2.0)).add(ctrl[0]).scale(6.0);
-    let d1 = ctrl[3].sub(ctrl[2].scale(2.0)).add(ctrl[1]).scale(6.0);
-    d0.scale(1.0 - t).add(d1.scale(t))
+    let d0 = ctrl[2].minus(ctrl[1].scale(2.0)).plus(ctrl[0]).scale(6.0);
+    let d1 = ctrl[3].minus(ctrl[2].scale(2.0)).plus(ctrl[1]).scale(6.0);
+    d0.scale(1.0 - t).plus(d1.scale(t))
 }
 
 fn chord_param(pts: &[Pt]) -> Vec<f64> {
     let n = pts.len();
     let mut u = vec![0.0; n];
     for i in 1..n {
-        u[i] = u[i - 1] + pts[i].sub(pts[i - 1]).len();
+        u[i] = u[i - 1] + pts[i].minus(pts[i - 1]).len();
     }
     let total = u[n - 1];
     if total < 1e-9 {
-        for i in 0..n {
-            u[i] = i as f64 / (n - 1) as f64;
+        for (i, value) in u.iter_mut().enumerate() {
+            *value = i as f64 / (n - 1) as f64;
         }
     } else {
         for v in u.iter_mut() {
@@ -195,7 +215,7 @@ fn generate_bezier(pts: &[Pt], u: &[f64], t_left: Pt, t_right: Pt) -> Cubic {
         let b3 = t * t * t;
         let a0 = t_left.scale(b1);
         let a1 = t_right.scale(b2);
-        let tmp = pts[i].sub(p0.scale(b0 + b1).add(p1.scale(b2 + b3)));
+        let tmp = pts[i].minus(p0.scale(b0 + b1).plus(p1.scale(b2 + b3)));
         c00 += a0.dot(a0);
         c01 += a0.dot(a1);
         c11 += a1.dot(a1);
@@ -203,7 +223,7 @@ fn generate_bezier(pts: &[Pt], u: &[f64], t_left: Pt, t_right: Pt) -> Cubic {
         x1 += a1.dot(tmp);
     }
     let det = c00 * c11 - c01 * c01;
-    let seg = p1.sub(p0).len();
+    let seg = p1.minus(p0).len();
     let (mut al, mut ar);
     if det.abs() < 1e-12 {
         al = seg / 3.0;
@@ -216,7 +236,12 @@ fn generate_bezier(pts: &[Pt], u: &[f64], t_left: Pt, t_right: Pt) -> Cubic {
         al = seg / 3.0;
         ar = seg / 3.0;
     }
-    [p0, p0.add(t_left.scale(al)), p1.add(t_right.scale(ar)), p1]
+    [
+        p0,
+        p0.plus(t_left.scale(al)),
+        p1.plus(t_right.scale(ar)),
+        p1,
+    ]
 }
 
 fn reparameterize(pts: &[Pt], ctrl: &Cubic, u: &[f64]) -> Vec<f64> {
@@ -225,7 +250,7 @@ fn reparameterize(pts: &[Pt], ctrl: &Cubic, u: &[f64]) -> Vec<f64> {
         let qu = q(ctrl, u[i]);
         let q1 = q_deriv1(ctrl, u[i]);
         let q2 = q_deriv2(ctrl, u[i]);
-        let diff = qu.sub(pts[i]);
+        let diff = qu.minus(pts[i]);
         let num = diff.dot(q1);
         let den = q1.dot(q1) + diff.dot(q2);
         out[i] = if den.abs() < 1e-12 {
@@ -241,7 +266,7 @@ fn max_error(pts: &[Pt], ctrl: &Cubic, u: &[f64]) -> (f64, usize) {
     let mut max = 0.0;
     let mut idx = 0;
     for i in 0..pts.len() {
-        let d = q(ctrl, u[i]).sub(pts[i]);
+        let d = q(ctrl, u[i]).minus(pts[i]);
         let e = d.dot(d);
         if e > max {
             max = e;
@@ -257,8 +282,13 @@ fn fit_cubic(pts: &[Pt], t_left: Pt, t_right: Pt, max_err2: f64, out: &mut Vec<C
         return;
     }
     if n == 2 {
-        let d = pts[1].sub(pts[0]).len() / 3.0;
-        out.push([pts[0], pts[0].add(t_left.scale(d)), pts[1].add(t_right.scale(d)), pts[1]]);
+        let d = pts[1].minus(pts[0]).len() / 3.0;
+        out.push([
+            pts[0],
+            pts[0].plus(t_left.scale(d)),
+            pts[1].plus(t_right.scale(d)),
+            pts[1],
+        ]);
         return;
     }
     let mut u = chord_param(pts);
@@ -286,9 +316,16 @@ fn fit_cubic(pts: &[Pt], t_left: Pt, t_right: Pt, max_err2: f64, out: &mut Vec<C
         return;
     }
     let split = split.clamp(1, n - 2);
-    let center = pts[split - 1].sub(pts[split + 1]).norm();
+    let center = pts[split - 1].minus(pts[split + 1]).norm();
     fit_cubic(&pts[..=split], t_left, center, max_err2, out, depth + 1);
-    fit_cubic(&pts[split..], center.scale(-1.0), t_right, max_err2, out, depth + 1);
+    fit_cubic(
+        &pts[split..],
+        center.scale(-1.0),
+        t_right,
+        max_err2,
+        out,
+        depth + 1,
+    );
 }
 
 /// Fit an OPEN polyline with a chain of cubic beziers.
@@ -297,9 +334,9 @@ pub fn fit_open(pts: &[Pt], fit_err: f64) -> Vec<Cubic> {
     if pts.len() < 2 {
         return out;
     }
-    let t_left = pts[1].sub(pts[0]).norm();
+    let t_left = pts[1].minus(pts[0]).norm();
     let n = pts.len();
-    let t_right = pts[n - 2].sub(pts[n - 1]).norm();
+    let t_right = pts[n - 2].minus(pts[n - 1]).norm();
     fit_cubic(pts, t_left, t_right, fit_err * fit_err, &mut out, 0);
     out
 }
@@ -310,12 +347,17 @@ mod tests {
 
     #[test]
     fn resample_square_preserves_perimeter() {
-        let sq = [Pt::new(0.0, 0.0), Pt::new(10.0, 0.0), Pt::new(10.0, 10.0), Pt::new(0.0, 10.0)];
+        let sq = [
+            Pt::new(0.0, 0.0),
+            Pt::new(10.0, 0.0),
+            Pt::new(10.0, 10.0),
+            Pt::new(0.0, 10.0),
+        ];
         let rs = resample_closed(&sq, 1.0);
         let n = rs.len();
         let mut per = 0.0;
         for i in 0..n {
-            per += rs[(i + 1) % n].sub(rs[i]).len();
+            per += rs[(i + 1) % n].minus(rs[i]).len();
         }
         assert!((per - 40.0).abs() < 0.5, "perimeter {per}");
     }
@@ -323,7 +365,12 @@ mod tests {
     #[test]
     fn fits_a_known_cubic_tightly() {
         // sample a smooth cubic, fit it, expect ~1 segment within tolerance
-        let ctrl = [Pt::new(0.0, 0.0), Pt::new(30.0, 90.0), Pt::new(70.0, -40.0), Pt::new(100.0, 50.0)];
+        let ctrl = [
+            Pt::new(0.0, 0.0),
+            Pt::new(30.0, 90.0),
+            Pt::new(70.0, -40.0),
+            Pt::new(100.0, 50.0),
+        ];
         let mut pts = Vec::new();
         for i in 0..=40 {
             let t = i as f64 / 40.0;
@@ -343,7 +390,7 @@ mod tests {
         for p in &pts {
             let mut best = f64::MAX;
             for on in &curve {
-                best = best.min(p.sub(*on).len());
+                best = best.min(p.minus(*on).len());
             }
             maxd = maxd.max(best);
         }

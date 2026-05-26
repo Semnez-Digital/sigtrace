@@ -28,7 +28,11 @@ fn rev(d: V) -> V {
 /// Returns loops as collapsed integer corner points (collinear runs removed).
 pub fn trace_loops(ink: &[u8], w: usize, h: usize) -> Vec<Vec<Pt>> {
     let fg = |x: i32, y: i32| -> bool {
-        x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h && ink[y as usize * w + x as usize] != 0
+        x >= 0
+            && y >= 0
+            && (x as usize) < w
+            && (y as usize) < h
+            && ink[y as usize * w + x as usize] != 0
     };
 
     // build directed lattice edges (start -> end)
@@ -62,12 +66,8 @@ pub fn trace_loops(ink: &[u8], w: usize, h: usize) -> Vec<Vec<Pt>> {
 
     let mut loops: Vec<Vec<Pt>> = Vec::new();
     for &s0 in &starts {
-        loop {
-            // any remaining edge from s0?
-            let first_end = match adj.get_mut(&s0).and_then(|v| v.pop()) {
-                Some(e) => e,
-                None => break,
-            };
+        // consume any remaining edges that start at s0
+        while let Some(first_end) = adj.get_mut(&s0).and_then(|v| v.pop()) {
             let mut path: Vec<V> = vec![s0, first_end];
             let mut din = (first_end.0 - s0.0, first_end.1 - s0.1);
             let mut cur = first_end;
@@ -107,7 +107,10 @@ pub fn trace_loops(ink: &[u8], w: usize, h: usize) -> Vec<Vec<Pt>> {
 fn collapse(path: &[V]) -> Vec<Pt> {
     let n = path.len();
     if n < 4 {
-        return path.iter().map(|&(x, y)| Pt::new(x as f64, y as f64)).collect();
+        return path
+            .iter()
+            .map(|&(x, y)| Pt::new(x as f64, y as f64))
+            .collect();
     }
     // path starts and ends at the same vertex (cur returned to start); drop dup
     let pts: Vec<V> = if path[0] == path[n - 1] {

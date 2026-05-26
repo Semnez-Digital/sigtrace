@@ -15,21 +15,26 @@ pub mod resize;
 
 use fit::Pt;
 
+const MAX_WORK_PIXELS: usize = 64_000_000;
+const MAX_BLUR_SIGMA: f64 = 8.0;
+const MIN_RESAMPLE_STEP: f64 = 0.05;
+const MAX_SMOOTH_SIGMA: f64 = 64.0;
+
 #[derive(Clone, Copy)]
 pub struct Options {
-    pub target_w: usize,   // working-resolution width
-    pub thresh: u8,        // ink = gray < thresh
-    pub step: f64,         // contour resample spacing (working px)
-    pub smooth: f64,       // contour smoothing sigma
-    pub fit_err: f64,      // bezier fit tolerance (working px)
-    pub min_len: f64,      // drop loops with smaller perimeter
-    pub corner_k: usize,   // neighbour offset for seam selection
-    pub despeckle_k: f64,  // drop components < despeckle_k * scale^2 px
+    pub target_w: usize,     // working-resolution width
+    pub thresh: u8,          // ink = gray < thresh
+    pub step: f64,           // contour resample spacing (working px)
+    pub smooth: f64,         // contour smoothing sigma
+    pub fit_err: f64,        // bezier fit tolerance (working px)
+    pub min_len: f64,        // drop loops with smaller perimeter
+    pub corner_k: usize,     // neighbour offset for seam selection
+    pub despeckle_k: f64,    // drop components < despeckle_k * scale^2 px
     pub auto_contrast: bool, // rescue light/low-contrast inputs (see preprocess)
-    pub dark_ink_max: u8,  // if the darkest ~2% of pixels is lighter than this,
-                           // there is no real dark ink -> contrast-stretch first
-    pub blur_k: f64,       // pre-threshold Gaussian blur sigma = blur_k * upscale
-                           // factor; removes the source-pixel "staircase" tremor
+    pub dark_ink_max: u8,    // if the darkest ~2% of pixels is lighter than this,
+    // there is no real dark ink -> contrast-stretch first
+    pub blur_k: f64, // pre-threshold Gaussian blur sigma = blur_k * upscale
+                     // factor; removes the source-pixel "staircase" tremor
 }
 
 impl Default for Options {
@@ -38,7 +43,7 @@ impl Default for Options {
             target_w: 3000, // higher working res => finer threshold-crossing => smoother thin strokes
             thresh: 145,
             step: 1.5,
-            smooth: 1.5,    // more contour smoothing tames thin-stroke wobble
+            smooth: 1.5, // more contour smoothing tames thin-stroke wobble
             fit_err: 2.0,
             min_len: 24.0,
             corner_k: 4,
@@ -50,6 +55,7 @@ impl Default for Options {
     }
 }
 
+#[derive(Debug)]
 pub struct TraceResult {
     pub path_d: String,
     pub width: usize,
@@ -57,21 +63,113 @@ pub struct TraceResult {
     pub subpaths: usize,
 }
 
+fn empty_result() -> TraceResult {
+    TraceResult {
+        path_d: String::new(),
+        width: 0,
+        height: 0,
+        subpaths: 0,
+    }
+}
+
+fn validate_input(
+    gray: &[u8],
+    w: usize,
+    h: usize,
+    opt: &Options,
+) -> Result<(usize, usize, f64), String> {
+    if w == 0 || h == 0 {
+        return Err("image dimensions must be non-zero".into());
+    }
+    if opt.target_w == 0 {
+        return Err("target width must be non-zero".into());
+    }
+    if !opt.step.is_finite() || opt.step <= 0.0 {
+        return Err("resample step must be a finite positive number".into());
+    }
+    if opt.step < MIN_RESAMPLE_STEP {
+        return Err(format!(
+            "resample step must be at least {}",
+            MIN_RESAMPLE_STEP
+        ));
+    }
+    if !opt.smooth.is_finite() || opt.smooth < 0.0 {
+        return Err("smooth sigma must be a finite non-negative number".into());
+    }
+    if opt.smooth > MAX_SMOOTH_SIGMA {
+        return Err(format!("smooth sigma must be at most {}", MAX_SMOOTH_SIGMA));
+    }
+    if !opt.fit_err.is_finite() || opt.fit_err <= 0.0 {
+        return Err("fit error must be a finite positive number".into());
+    }
+    if !opt.min_len.is_finite() || opt.min_len < 0.0 {
+        return Err("minimum loop length must be a finite non-negative number".into());
+    }
+    if !opt.despeckle_k.is_finite() || opt.despeckle_k < 0.0 {
+        return Err("despeckle factor must be a finite non-negative number".into());
+    }
+    if !opt.blur_k.is_finite() || opt.blur_k < 0.0 {
+        return Err("blur factor must be a finite non-negative number".into());
+    }
+
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| "image dimensions overflow".to_string())?;
+    if gray.len() != expected {
+        return Err(format!(
+            "pixel buffer has {} bytes, expected {}",
+            gray.len(),
+            expected
+        ));
+    }
+
+    let scale = opt.target_w as f64 / w as f64;
+    let nw = opt.target_w;
+    let nh = ((h as f64 * scale).round() as usize).max(1);
+    let work_pixels = nw
+        .checked_mul(nh)
+        .ok_or_else(|| "working image dimensions overflow".to_string())?;
+    if work_pixels > MAX_WORK_PIXELS {
+        return Err(format!(
+            "working image would be {} pixels, limit is {}",
+            work_pixels, MAX_WORK_PIXELS
+        ));
+    }
+    Ok((nw, nh, scale))
+}
+
 /// Upscale + (optional) contrast rescue + threshold + despeckle.
 /// Returns (ink mask 0/255, nw, nh).
-fn preprocess(gray: &[u8], w: usize, h: usize, opt: &Options) -> (Vec<u8>, usize, usize) {
-    let s = ((opt.target_w as f64 / w as f64).round() as usize).max(1);
-    let (nw, nh) = (w * s, h * s);
+fn preprocess(
+    gray: &[u8],
+    w: usize,
+    h: usize,
+    opt: &Options,
+    nw: usize,
+    nh: usize,
+    scale: f64,
+) -> (Vec<u8>, usize, usize) {
     let mut up = resize::bicubic_gray(gray, w, h, nw, nh);
     if opt.auto_contrast {
         rescue_contrast(&mut up, opt.dark_ink_max);
     }
-    if opt.blur_k > 0.0 {
-        up = blur::gaussian(&up, nw, nh, opt.blur_k * s as f64);
+    let sigma = (opt.blur_k * scale).min(MAX_BLUR_SIGMA);
+    if sigma > 0.0 && !is_flat(&up) {
+        up = blur::gaussian(&up, nw, nh, sigma);
     }
-    let mut ink: Vec<u8> = up.iter().map(|&v| if v < opt.thresh { 255 } else { 0 }).collect();
-    despeckle(&mut ink, nw, nh, (opt.despeckle_k * (s * s) as f64) as usize);
+    let mut ink: Vec<u8> = up
+        .iter()
+        .map(|&v| if v < opt.thresh { 255 } else { 0 })
+        .collect();
+    despeckle(&mut ink, nw, nh, (opt.despeckle_k * scale * scale) as usize);
     (ink, nw, nh)
+}
+
+fn is_flat(img: &[u8]) -> bool {
+    match img.split_first() {
+        Some((&first, rest)) => rest.iter().all(|&v| v == first),
+        None => true,
+    }
 }
 
 fn percentile(hist: &[u32; 256], total: u32, frac: f64) -> u8 {
@@ -157,14 +255,26 @@ fn perimeter(loop_pts: &[Pt]) -> f64 {
     let n = loop_pts.len();
     let mut s = 0.0;
     for i in 0..n {
-        s += loop_pts[(i + 1) % n].sub(loop_pts[i]).len();
+        s += loop_pts[(i + 1) % n].minus(loop_pts[i]).len();
     }
     s
 }
 
 /// Full pipeline: grayscale (ink dark) -> SVG bezier path data.
 pub fn trace_signature_gray(gray: &[u8], w: usize, h: usize, opt: &Options) -> TraceResult {
-    let (ink, nw, nh) = preprocess(gray, w, h, opt);
+    trace_signature_gray_checked(gray, w, h, opt).unwrap_or_else(|_| empty_result())
+}
+
+/// Checked variant of [`trace_signature_gray`] that reports invalid input instead
+/// of returning an empty trace.
+pub fn trace_signature_gray_checked(
+    gray: &[u8],
+    w: usize,
+    h: usize,
+    opt: &Options,
+) -> Result<TraceResult, String> {
+    let (nw, nh, scale) = validate_input(gray, w, h, opt)?;
+    let (ink, nw, nh) = preprocess(gray, w, h, opt, nw, nh, scale);
     let loops = contour::trace_loops(&ink, nw, nh);
 
     let mut d = String::new();
@@ -208,16 +318,37 @@ pub fn trace_signature_gray(gray: &[u8], w: usize, h: usize, opt: &Options) -> T
         d.push('Z');
         subpaths += 1;
     }
-    TraceResult { path_d: d, width: nw, height: nh, subpaths }
+    Ok(TraceResult {
+        path_d: d,
+        width: nw,
+        height: nh,
+        subpaths,
+    })
 }
 
 /// Wrap a trace result in a standalone SVG document.
 pub fn svg_document(res: &TraceResult, fill: &str) -> String {
+    let fill = escape_xml_attr(fill);
     format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" \
          viewBox=\"0 0 {} {}\"><path fill=\"{}\" fill-rule=\"evenodd\" d=\"{}\"/></svg>",
         res.width, res.height, res.width, res.height, fill, res.path_d
     )
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -238,14 +369,24 @@ mod tests {
     fn auto_contrast_rescues_light_ink() {
         let (w, h) = (60usize, 60usize);
         let img = light_block_image(w, h, 200); // ink lighter than thresh(145)
-        let mut opt = Options { target_w: 120, despeckle_k: 0.5, ..Options::default() };
+        let mut opt = Options {
+            target_w: 120,
+            despeckle_k: 0.5,
+            ..Options::default()
+        };
 
         let rescued = trace_signature_gray(&img, w, h, &opt);
-        assert!(rescued.subpaths >= 1, "auto-contrast should recover light ink");
+        assert!(
+            rescued.subpaths >= 1,
+            "auto-contrast should recover light ink"
+        );
 
         opt.auto_contrast = false;
         let missed = trace_signature_gray(&img, w, h, &opt);
-        assert_eq!(missed.subpaths, 0, "without it, light ink (200 > thresh) is missed");
+        assert_eq!(
+            missed.subpaths, 0,
+            "without it, light ink (200 > thresh) is missed"
+        );
     }
 
     #[test]
@@ -253,11 +394,88 @@ mod tests {
         // a normal dark-ink image must NOT be altered by the guard
         let (w, h) = (60usize, 60usize);
         let img = light_block_image(w, h, 20); // genuine dark ink
-        let opt = Options { target_w: 120, despeckle_k: 0.5, ..Options::default() };
+        let opt = Options {
+            target_w: 120,
+            despeckle_k: 0.5,
+            ..Options::default()
+        };
         let with = trace_signature_gray(&img, w, h, &opt);
-        let without = trace_signature_gray(&img, w, h,
-            &Options { auto_contrast: false, ..opt });
-        assert_eq!(with.subpaths, without.subpaths, "dark ink path must be unchanged");
+        let without = trace_signature_gray(
+            &img,
+            w,
+            h,
+            &Options {
+                auto_contrast: false,
+                ..opt
+            },
+        );
+        assert_eq!(
+            with.subpaths, without.subpaths,
+            "dark ink path must be unchanged"
+        );
         assert!(with.subpaths >= 1);
+    }
+
+    #[test]
+    fn checked_api_rejects_bad_dimensions() {
+        let err = trace_signature_gray_checked(&[], 0, 10, &Options::default()).unwrap_err();
+        assert!(err.contains("non-zero"));
+
+        let err = trace_signature_gray_checked(&[255], 2, 2, &Options::default()).unwrap_err();
+        assert!(err.contains("expected 4"));
+    }
+
+    #[test]
+    fn checked_api_rejects_unbounded_options() {
+        let img = vec![255u8; 4];
+        let err = trace_signature_gray_checked(
+            &img,
+            2,
+            2,
+            &Options {
+                step: 0.0,
+                ..Options::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("resample step"));
+
+        let err = trace_signature_gray_checked(
+            &img,
+            2,
+            2,
+            &Options {
+                smooth: 1_000.0,
+                ..Options::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("smooth sigma"));
+    }
+
+    #[test]
+    fn target_width_is_exact() {
+        let img = vec![0u8; 401];
+        let opt = Options {
+            target_w: 3000,
+            blur_k: 0.0,
+            despeckle_k: 0.0,
+            ..Options::default()
+        };
+        let res = trace_signature_gray_checked(&img, 401, 1, &opt).unwrap();
+        assert_eq!(res.width, 3000);
+    }
+
+    #[test]
+    fn svg_fill_is_escaped() {
+        let res = TraceResult {
+            path_d: String::new(),
+            width: 1,
+            height: 1,
+            subpaths: 0,
+        };
+        let svg = svg_document(&res, "\"/><script>alert(1)</script><path fill=\"");
+        assert!(!svg.contains("<script>"));
+        assert!(svg.contains("&quot;/&gt;&lt;script&gt;"));
     }
 }
