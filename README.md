@@ -19,8 +19,9 @@ dark-ish ink on a light background and is tuned hard for that one job.
    └───────────────┘          └───────────────┘
 ```
 
-See [`examples/comparison.png`](examples/comparison.png) for *original → degraded
-→ sigtrace* across a dozen well-known signatures.
+*original → degraded (eID-like) → sigtrace*, across a dozen well-known signatures:
+
+![original vs degraded eID-like JPEG vs sigtrace output, for a dozen signatures](examples/comparison.png)
 
 ## Why it's easy to ship
 
